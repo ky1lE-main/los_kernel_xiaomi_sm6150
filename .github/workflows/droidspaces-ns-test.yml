@@ -31,9 +31,7 @@ steps:
     run: |
       mkdir -p "$HOME/clang"
       cd "$HOME/clang"
-      curl -fsSL \
-        https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman \
-        -o antman
+      curl -fsSL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
       chmod +x antman
       ./antman -S
       ./antman --patch=glibc
@@ -41,19 +39,15 @@ steps:
 
   - name: Install cross compilers
     run: |
-      git clone --depth=1 -b main \
-        https://github.com/greenforce-project/gcc-arm64 gcc64
-      git clone --depth=1 -b main \
-        https://github.com/greenforce-project/gcc-arm gcc32
+      git clone --depth=1 -b main https://github.com/greenforce-project/gcc-arm64 gcc64
+      git clone --depth=1 -b main https://github.com/greenforce-project/gcc-arm gcc32
       echo "$GITHUB_WORKSPACE/gcc64/bin" >> "$GITHUB_PATH"
       echo "$GITHUB_WORKSPACE/gcc32/bin" >> "$GITHUB_PATH"
 
   - name: Integrate KernelSU Next
     run: |
       set -euxo pipefail
-      curl -fsSL \
-        https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh \
-        -o /tmp/ksu-setup.sh
+      curl -fsSL https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh -o /tmp/ksu-setup.sh
       bash /tmp/ksu-setup.sh legacy
       test -f drivers/kernelsu/Kbuild
       grep -q 'CONFIG_KSU_KPROBES_HOOK' drivers/kernelsu/Kbuild
@@ -68,7 +62,6 @@ steps:
       make O=out ARCH=arm64 vendor/sweet_defconfig
 
       scripts/config --file out/.config \
-        --enable MODULES \
         --enable NAMESPACES \
         --enable UTS_NS \
         --enable PID_NS \
@@ -88,10 +81,8 @@ steps:
 
       make O=out ARCH=arm64 olddefconfig
 
-      echo "===== Required configuration ====="
-      grep -E \
-        '^(CONFIG_(NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|NET_NS|DEVTMPFS|DEVTMPFS_MOUNT|KPROBES|KRETPROBES|KPROBE_EVENTS|KSU|KSU_KPROBES_HOOK|HAVE_SYSCALL_TRACEPOINTS)=|# CONFIG_(NAMESPACES|PID_NS|IPC_NS|KRETPROBES|KSU_KPROBES_HOOK) is not set)' \
-        out/.config || true
+      echo "===== Namespace and KernelSU configuration ====="
+      grep -E '^(CONFIG_(NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|NET_NS|DEVTMPFS|DEVTMPFS_MOUNT|KPROBES|KRETPROBES|KPROBE_EVENTS|KSU|KSU_KPROBES_HOOK|HAVE_SYSCALL_TRACEPOINTS)=|# CONFIG_(NAMESPACES|PID_NS|IPC_NS|KRETPROBES|KSU_KPROBES_HOOK) is not set)' out/.config || true
 
       for option in \
         CONFIG_NAMESPACES CONFIG_PID_NS CONFIG_IPC_NS \
@@ -129,16 +120,13 @@ steps:
   - name: Package AnyKernel3 ZIP
     run: |
       set -euxo pipefail
-      git clone --depth=1 -b reforge \
-        https://github.com/manipvlator/Anykernel3.git AnyKernel3
+      git clone --depth=1 -b reforge https://github.com/manipvlator/Anykernel3.git AnyKernel3
 
       cp out/arch/arm64/boot/Image.gz AnyKernel3/
       cp out/arch/arm64/boot/dtbo.img AnyKernel3/
       cp out/arch/arm64/boot/dtb.img AnyKernel3/
 
-      (cd AnyKernel3 && zip -r \
-        "$GITHUB_WORKSPACE/droidspaces-namespace-test.zip" . \
-        -x '.git/*')
+      (cd AnyKernel3 && zip -r "$GITHUB_WORKSPACE/droidspaces-namespace-test.zip" . -x '.git/*')
 
   - name: Upload test ZIP and config
     uses: actions/upload-artifact@v4
