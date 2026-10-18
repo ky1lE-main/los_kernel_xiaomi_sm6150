@@ -30,20 +30,26 @@ jobs:
           echo "$HOME/clang/bin" >> $GITHUB_PATH
           $HOME/clang/bin/clang --version
 
-      - name: Configure (add namespace options)
+      - name: Configure (running Agni config + namespace options)
         run: |
           export ARCH=arm64
-          make O=out $DEFCONFIG
-          if [ -f arch/arm64/configs/vendor/sweet.config ]; then
-            scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/vendor/sweet.config
+          if [ -f agni_base.config.gz ]; then
+            mkdir -p out
+            zcat agni_base.config.gz > out/.config
+            make O=out CC=clang LD=ld.lld olddefconfig
+          else
+            echo "agni_base.config.gz missing in repo root" ; exit 1
           fi
           scripts/config --file out/.config \
             -e NAMESPACES -e UTS_NS -e PID_NS \
             -e SYSVIPC -e SYSVIPC_SYSCTL -e IPC_NS \
             -e USER_NS -e DEVTMPFS -e DEVTMPFS_MOUNT
-          make O=out olddefconfig
+          make O=out CC=clang LD=ld.lld olddefconfig
           echo "---- verify ----"
-          grep -E "CONFIG_(NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS)[= ]" out/.config
+          grep -E "CONFIG_(NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS|KSU|KSU_SUSFS)=" out/.config
+          for o in KSU KSU_SUSFS PID_NS IPC_NS; do
+            grep -q "^CONFIG_$o=y" out/.config || { echo "MISSING $o"; exit 1; }
+          done
 
       - name: Build
         shell: bash
@@ -56,6 +62,9 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             2>&1 | tee build.log
 
+      - name: Copy config for artifact
+        run: cp out/.config out/config-used.txt
+
       - name: Upload kernel images
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +72,6 @@ jobs:
           path: |
             out/arch/arm64/boot/Image*
             out/arch/arm64/boot/dtbo.img
-            out/.config
+            out/config-used.txt
             build.log
             
