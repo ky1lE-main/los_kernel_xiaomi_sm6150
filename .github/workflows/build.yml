@@ -16,6 +16,7 @@ jobs:
         with:
           ref: 54dde6839c08907860bdcc8b69eab72c75f17319
           fetch-depth: 1
+          submodules: recursive
 
       - name: Fetch agni_base.config.gz from the workflow commit
         run: |
@@ -51,6 +52,13 @@ jobs:
             -e SYSVIPC -e SYSVIPC_SYSCTL -e IPC_NS \
             -e USER_NS -e DEVTMPFS -e DEVTMPFS_MOUNT
           make O=out CC=clang LD=ld.lld olddefconfig
+          echo "---- KSU diagnostics ----"
+          echo "input had:"; zcat agni_base.config.gz | grep -E "^CONFIG_KSU=" || true
+          echo "output has:"; grep -E "KSU" out/.config | head -5 || true
+          ls -la drivers/ | grep -i -E "kernelsu|ksu" || echo "no drivers/kernelsu entry"
+          ls drivers/kernelsu 2>&1 | head -5
+          grep -n "kernelsu" drivers/Kconfig drivers/Makefile || true
+          grep -n -A12 "^config KSU$" drivers/kernelsu/Kconfig 2>&1 | head -20
           echo "---- verify ----"
           grep -E "CONFIG_(NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS|KSU|KSU_SUSFS)=" out/.config
           for o in KSU KSU_SUSFS PID_NS IPC_NS; do
