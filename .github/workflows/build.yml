@@ -1,0 +1,62 @@
+name: Build Agni 1.9 + namespaces
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      # CHANGE THIS if your repo's sweet defconfig is named differently
+      # (check arch/arm64/configs/ and arch/arm64/configs/vendor/)
+      DEFCONFIG: vendor/sweet_defconfig
+    steps:
+      - name: Checkout kernel source (Agni 1.9 commit)
+        uses: actions/checkout@v4
+        with:
+          ref: 54dde6839c08907860bdcc8b69eab72c75f17319
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio zip curl xz-utils lld ccache python3 device-tree-compiler
+
+      - name: Get Neutron Clang
+        run: |
+          mkdir -p $HOME/clang && cd $HOME/clang
+          bash <(curl -s https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman) -S
+          echo "$HOME/clang/bin" >> $GITHUB_PATH
+
+      - name: Configure (add namespace options)
+        run: |
+          export ARCH=arm64
+          make O=out $DEFCONFIG
+          scripts/config --file out/.config \
+            -e NAMESPACES -e UTS_NS -e PID_NS \
+            -e SYSVIPC -e SYSVIPC_SYSCTL -e IPC_NS \
+            -e USER_NS -e DEVTMPFS -e DEVTMPFS_MOUNT
+          make O=out olddefconfig
+          echo "---- verify ----"
+          grep -E "CONFIG_(NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS)[= ]" out/.config
+
+      - name: Build
+        run: |
+          export ARCH=arm64
+          make -j$(nproc) O=out \
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            2>&1 | tee build.log
+
+      - name: Upload kernel images
+        uses: actions/upload-artifact@v4
+        with:
+          name: agni-ns-kernel
+          path: |
+            out/arch/arm64/boot/Image*
+            out/arch/arm64/boot/dtbo.img
+            out/.config
+            build.log
+            
