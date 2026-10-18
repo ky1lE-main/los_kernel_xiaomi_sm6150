@@ -17,6 +17,12 @@ jobs:
           ref: 54dde6839c08907860bdcc8b69eab72c75f17319
           fetch-depth: 1
 
+      - name: Fetch agni_base.config.gz from the workflow commit
+        run: |
+          git fetch --depth=1 origin ${{ github.sha }}
+          git show FETCH_HEAD:agni_base.config.gz > agni_base.config.gz
+          ls -l agni_base.config.gz
+
       - name: Install dependencies
         run: |
           sudo apt-get update
