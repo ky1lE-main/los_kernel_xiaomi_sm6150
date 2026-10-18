@@ -1,11 +1,11 @@
 
-name: Build Agni 1.9 + KernelSU Next + Namespaces
+name: Diagnose Agni KernelSU Next Hooks
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  diagnose:
     runs-on: ubuntu-22.04
 
     steps:
@@ -26,14 +26,11 @@ jobs:
             agni_base.config.gz
           sparse-checkout-cone-mode: false
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            bc bison flex libssl-dev libelf-dev \
-            cpio zip curl xz-utils lld ccache \
-            python3 device-tree-compiler patchelf \
-            zstd wget git
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
+            cpio zip curl xz-utils lld python3 git
 
       - name: Install Neutron Clang
         run: |
@@ -42,15 +39,13 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman) -S
           bash <(curl -fsSL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman) --patch=glibc
           echo "$HOME/clang/bin" >> "$GITHUB_PATH"
-          "$HOME/clang/bin/clang" --version
 
-      - name: Verify and copy base config
+      - name: Copy config
         run: |
           set -e
           test -s config-repo/agni_base.config.gz
           gzip -t config-repo/agni_base.config.gz
           cp config-repo/agni_base.config.gz kernel/agni_base.config.gz
-          echo "Base config downloaded and verified."
 
       - name: Integrate KernelSU Next
         working-directory: kernel
@@ -61,17 +56,10 @@ jobs:
             -o /tmp/ksu-setup.sh
           bash /tmp/ksu-setup.sh legacy
 
-          test -d KernelSU-Next || {
-            echo "ERROR: KernelSU Next source directory not found."
-            exit 1
-          }
+          echo "===== KernelSU directories ====="
+          ls -ld KernelSU-Next drivers/kernelsu
 
-          test -f drivers/kernelsu/Kbuild || {
-            echo "ERROR: KernelSU Kbuild integration was not created."
-            exit 1
-          }
-
-      - name: Configure namespaces and KSU hooks
+      - name: Configure and diagnose hooks
         working-directory: kernel
         shell: bash
         run: |
@@ -95,67 +83,41 @@ jobs:
             -e DEVTMPFS_MOUNT \
             -e KPROBES \
             -e KPROBE_EVENTS \
-            -e KSU_KPROBE_HOOKS \
             -e KSU
 
           make O=out CC=clang LD=ld.lld olddefconfig
 
-          echo "===== Effective configuration ====="
-          grep -E '^CONFIG_(MODULES|NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS|DEVTMPFS_MOUNT|KPROBES|KPROBE_EVENTS|KSU_KPROBE_HOOKS|KSU|KSU_SUSFS)=' out/.config || true
+          echo "===== Effective config ====="
+          grep -E '^(CONFIG_(KSU|KSU_[A-Z0-9_]*HOOK[A-Z0-9_]*|KPROBES|KPROBE_EVENTS|NAMESPACES|PID_NS|IPC_NS|USER_NS)=|# CONFIG_(KSU_[A-Z0-9_]*HOOK[A-Z0-9_]*|KPROBES|KPROBE_EVENTS) is not set)' out/.config || true
 
-          echo "===== Namespace checks ====="
-          for opt in NAMESPACES UTS_NS PID_NS SYSVIPC IPC_NS; do
-            grep -q "^CONFIG_${opt}=y$" out/.config || {
-              echo "ERROR: CONFIG_${opt} is missing after olddefconfig."
-              exit 1
-            }
-          done
+          echo "===== Hook references in Kbuild/Kconfig ====="
+          grep -RniE 'No hooks were defined|KSU_KPROBE_HOOKS|KSU_WITH_KPROBES|KSU_MANUAL_HOOK|KPROBE_EVENTS|KPROBES' \
+            drivers/kernelsu KernelSU-Next \
+            --include='Kbuild' --include='Makefile' --include='Kconfig' \
+            --include='*.mk' 2>/dev/null | head -200 || true
 
-          grep -q '^CONFIG_KSU=y$' out/.config || {
-            echo "ERROR: KernelSU is not enabled."
-            exit 1
-          }
-
-          if ! grep -q '^CONFIG_KPROBES=y$' out/.config ||
-             ! grep -q '^CONFIG_KPROBE_EVENTS=y$' out/.config ||
-             ! grep -q '^CONFIG_KSU_KPROBE_HOOKS=y$'; then
-            echo "ERROR: Automatic KernelSU hooks are not fully configured."
-            echo "Check the effective configuration above."
-            exit 1
+          echo "===== drivers/kernelsu/Kbuild lines 1-260 ====="
+          if [ -f drivers/kernelsu/Kbuild ]; then
+            sed -n '1,260p' drivers/kernelsu/Kbuild
+          else
+            echo "ERROR: drivers/kernelsu/Kbuild not found."
           fi
 
-      - name: Build kernel
-        working-directory: kernel
-        shell: bash
-        run: |
-          set -o pipefail
-          export ARCH=arm64
-          make -j"$(nproc)" O=out \
-            CC=clang LD=ld.lld \
-            AR=llvm-ar NM=llvm-nm \
-            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            2>&1 | tee build.log
+          echo "===== KernelSU Kconfig files ====="
+          find drivers/kernelsu KernelSU-Next -name Kconfig -type f -print 2>/dev/null || true
 
-      - name: Verify build output
-        working-directory: kernel
-        run: |
-          set -e
-          test -s out/arch/arm64/boot/Image
-          cp out/.config out/config-used.txt
-          echo "Kernel Image successfully produced."
+          echo "===== Git status ====="
+          git status --short
 
-      - name: Upload build diagnostics
+          echo "===== Diagnostic complete; intentionally not compiling ====="
+
+      - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: agni-ns-kernel-diagnostics
+          name: kernelsu-hook-diagnostics
           path: |
-            kernel/out/arch/arm64/boot/Image*
-            kernel/out/arch/arm64/boot/dtbo.img
-            kernel/out/config-used.txt
-            kernel/build.log
+            kernel/out/.config
+            kernel/drivers/kernelsu/Kbuild
           if-no-files-found: warn
           
