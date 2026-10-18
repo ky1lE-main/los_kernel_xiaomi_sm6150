@@ -17,11 +17,10 @@ jobs:
           path: kernel
           fetch-depth: 1
 
-      - name: Checkout config from my fork
+      - name: Checkout this repository for base config
         uses: actions/checkout@v4
         with:
-          repository: ky1IE-main/los_kernel_xiaomi_sm6150
-          ref: stable
+          ref: ${{ github.ref }}
           path: config-repo
           sparse-checkout: |
             agni_base.config.gz
@@ -104,14 +103,12 @@ jobs:
           echo "===== Effective configuration ====="
           grep -E '^CONFIG_(MODULES|NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS|DEVTMPFS_MOUNT|KPROBES|KPROBE_EVENTS|KSU_KPROBE_HOOKS|KSU|KSU_SUSFS)=' out/.config || true
 
-          echo "===== Required namespace checks ====="
+          echo "===== Namespace checks ====="
           for opt in NAMESPACES UTS_NS PID_NS SYSVIPC IPC_NS; do
-            if grep -q "^CONFIG_${opt}=y$" out/.config; then
-              echo "OK: CONFIG_${opt}=y"
-            else
-              echo "ERROR: CONFIG_${opt} is missing."
+            grep -q "^CONFIG_${opt}=y$" out/.config || {
+              echo "ERROR: CONFIG_${opt} is missing after olddefconfig."
               exit 1
-            fi
+            }
           done
 
           grep -q '^CONFIG_KSU=y$' out/.config || {
@@ -123,7 +120,7 @@ jobs:
              ! grep -q '^CONFIG_KPROBE_EVENTS=y$' out/.config ||
              ! grep -q '^CONFIG_KSU_KPROBE_HOOKS=y$'; then
             echo "ERROR: Automatic KernelSU hooks are not fully configured."
-            echo "Inspect the configuration output before proceeding."
+            echo "Check the effective configuration above."
             exit 1
           fi
 
