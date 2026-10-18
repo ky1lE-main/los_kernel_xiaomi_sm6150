@@ -18,6 +18,16 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Where is KernelSU in this source? (diagnostics)
+        run: |
+          echo "== root =="; ls
+          echo "== gitmodules =="; cat .gitmodules 2>&1 | head -20
+          echo "== tracked ksu files =="; git ls-files | grep -i -E "ksu|kernelsu|susfs" | head -30
+          echo "== find ksu dirs =="; find . -maxdepth 4 \( -iname "*kernelsu*" -o -iname "*ksu*" \) -not -path "./.git/*" | head -30
+          echo "== hooks in Makefile/Kconfig =="
+          grep -n -i -E "ksu|kernelsu" Makefile drivers/Makefile drivers/Kconfig fs/Makefile fs/Kconfig 2>&1 | head -30
+          echo "== recent commits =="; git log --oneline -8
+
       - name: Fetch agni_base.config.gz from the workflow commit
         run: |
           git fetch --depth=1 origin ${{ github.sha }}
