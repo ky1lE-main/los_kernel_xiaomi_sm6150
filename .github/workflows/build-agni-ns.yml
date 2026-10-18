@@ -14,7 +14,18 @@ jobs:
         with:
           repository: manipvlator/los_kernel_xiaomi_sm6150
           ref: 54dde6839c08907860bdcc8b69eab72c75f17319
+          path: kernel
           fetch-depth: 1
+
+      - name: Checkout config from my fork
+        uses: actions/checkout@v4
+        with:
+          repository: ky1IE-main/los_kernel_xiaomi_sm6150
+          ref: stable
+          path: config-repo
+          sparse-checkout: |
+            agni_base.config.gz
+          sparse-checkout-cone-mode: false
 
       - name: Install build dependencies
         run: |
@@ -34,7 +45,16 @@ jobs:
           echo "$HOME/clang/bin" >> "$GITHUB_PATH"
           "$HOME/clang/bin/clang" --version
 
+      - name: Verify and copy base config
+        run: |
+          set -e
+          test -s config-repo/agni_base.config.gz
+          gzip -t config-repo/agni_base.config.gz
+          cp config-repo/agni_base.config.gz kernel/agni_base.config.gz
+          echo "Base config downloaded and verified."
+
       - name: Integrate KernelSU Next
+        working-directory: kernel
         run: |
           set -e
           curl -fsSL \
@@ -53,17 +73,13 @@ jobs:
           }
 
       - name: Configure namespaces and KSU hooks
+        working-directory: kernel
         shell: bash
         run: |
           set -e
           export ARCH=arm64
           export CC=clang
           export LD=ld.lld
-
-          if [ ! -f agni_base.config.gz ]; then
-            echo "ERROR: agni_base.config.gz is missing."
-            exit 1
-          fi
 
           mkdir -p out
           zcat agni_base.config.gz > out/.config
@@ -88,35 +104,31 @@ jobs:
           echo "===== Effective configuration ====="
           grep -E '^CONFIG_(MODULES|NAMESPACES|UTS_NS|PID_NS|SYSVIPC|IPC_NS|USER_NS|DEVTMPFS|DEVTMPFS_MOUNT|KPROBES|KPROBE_EVENTS|KSU_KPROBE_HOOKS|KSU|KSU_SUSFS)=' out/.config || true
 
-          echo "===== Disabled or missing options ====="
-          for opt in MODULES NAMESPACES UTS_NS PID_NS SYSVIPC IPC_NS USER_NS DEVTMPFS KPROBES KPROBE_EVENTS KSU_KPROBE_HOOKS KSU; do
+          echo "===== Required namespace checks ====="
+          for opt in NAMESPACES UTS_NS PID_NS SYSVIPC IPC_NS; do
             if grep -q "^CONFIG_${opt}=y$" out/.config; then
               echo "OK: CONFIG_${opt}=y"
             else
-              echo "MISSING: CONFIG_${opt}"
+              echo "ERROR: CONFIG_${opt} is missing."
+              exit 1
             fi
           done
 
-          if ! grep -q '^CONFIG_PID_NS=y$' out/.config ||
-             ! grep -q '^CONFIG_IPC_NS=y$'; then
-            echo "ERROR: Required namespaces did not survive olddefconfig."
-            exit 1
-          fi
-
-          if ! grep -q '^CONFIG_KSU=y$' out/.config; then
+          grep -q '^CONFIG_KSU=y$' out/.config || {
             echo "ERROR: KernelSU is not enabled."
             exit 1
-          fi
+          }
 
           if ! grep -q '^CONFIG_KPROBES=y$' out/.config ||
              ! grep -q '^CONFIG_KPROBE_EVENTS=y$' out/.config ||
              ! grep -q '^CONFIG_KSU_KPROBE_HOOKS=y$'; then
-            echo "ERROR: Automatic KSU hooks are not fully configured."
-            echo "Inspect the configuration output; do not flash this build."
+            echo "ERROR: Automatic KernelSU hooks are not fully configured."
+            echo "Inspect the configuration output before proceeding."
             exit 1
           fi
 
       - name: Build kernel
+        working-directory: kernel
         shell: bash
         run: |
           set -o pipefail
@@ -131,26 +143,22 @@ jobs:
             2>&1 | tee build.log
 
       - name: Verify build output
+        working-directory: kernel
         run: |
           set -e
-          find out/arch/arm64/boot -maxdepth 2 -type f \
-            \( -name 'Image' -o -name 'Image.gz' -o -name 'Image.gz-dtb' -o -name 'dtbo.img' \) \
-            -print
-          test -s out/arch/arm64/boot/Image || {
-            echo "ERROR: Kernel Image was not produced."
-            exit 1
-          }
+          test -s out/arch/arm64/boot/Image
           cp out/.config out/config-used.txt
+          echo "Kernel Image successfully produced."
 
-      - name: Upload build artifacts
+      - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agni-ns-kernel-diagnostics
           path: |
-            out/arch/arm64/boot/Image*
-            out/arch/arm64/boot/dtbo.img
-            out/config-used.txt
-            build.log
+            kernel/out/arch/arm64/boot/Image*
+            kernel/out/arch/arm64/boot/dtbo.img
+            kernel/out/config-used.txt
+            kernel/build.log
           if-no-files-found: warn
           
